@@ -10,4 +10,3 @@
 .env
 src/.env
 include/wifi_config.h
-
